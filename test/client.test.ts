@@ -10,6 +10,8 @@ import {
     PlanLimitError,
     QuotaExceededError,
     RateLimitedError,
+    RuleSet,
+    RulesVersionMismatchError,
     ServerError,
     TransportError,
     Validation,
@@ -39,7 +41,7 @@ describe('sending documents', () => {
         assert.equal(sent.url.href, 'https://xmlvalid.com/api/v1/validations?wait=10&schema=peppol-bis-3-invoice&name=invoice.xml');
         assert.equal(sent.headers.get('Authorization'), 'Bearer xv_test');
         assert.equal(sent.headers.get('Content-Type'), 'application/xml');
-        assert.equal(sent.headers.get('User-Agent'), 'xmlvalid-js/1.0.0');
+        assert.equal(sent.headers.get('User-Agent'), 'xmlvalid-js/1.1.0');
         assert.equal(sent.body, readFileSync(fixture('invoice.xml'), 'utf8'));
         assert.equal(result.reportUrl, 'https://xmlvalid.com/api/v1/validations/val_1/report');
         assert.deepEqual(result.errors.map(String), ['Line 139: [BR-CO-16] Amount due']);
@@ -91,6 +93,30 @@ describe('sending documents', () => {
         assert.match(body, /name="rules_path\[\]"\r\n\r\nparts\/totals.sch\r\n/);
         assert.match(body, /name="doctype"\r\n\r\n1\r\n/);
         assert.match(body, /name="wait"\r\n\r\n10\r\n/);
+    });
+
+    it('pins rule set releases in each form', async () => {
+        api.json(200, validation()).json(200, validation()).json(200, validation()).json(200, validation());
+        const pins = ['peppol-bis-3-ubl@3.0.21', 'en16931-ubl@1.3.16'];
+
+        await client.validate({ text: '<a/>' }, { schema: 'peppol-bis-3-invoice', rulesVersion: pins });
+        await client.validate({ text: '<a/>' }, { rulesVersion: 'peppol-bis-3-ubl@3.0.21' });
+        await client.validate({ url: 'https://example.com/a.xml' }, { rulesVersion: 'peppol-bis-3-ubl@3.0.21' });
+        await client.validate({ text: '<a/>' }, { schemaFile: fixture('invoice.xsd'), rulesVersion: pins });
+
+        assert.equal(api.sent[0]!.url.searchParams.get('rules_version'), 'peppol-bis-3-ubl@3.0.21,en16931-ubl@1.3.16');
+        assert.equal(api.sent[1]!.url.searchParams.get('rules_version'), 'peppol-bis-3-ubl@3.0.21');
+        assert.equal(api.sent[2]!.body, '{"url":"https://example.com/a.xml","wait":10,"rules_version":["peppol-bis-3-ubl@3.0.21"]}');
+        assert.match(api.sent[3]!.body, /name="rules_version\[\]"\r\n\r\npeppol-bis-3-ubl@3.0.21\r\n/);
+        assert.match(api.sent[3]!.body, /name="rules_version\[\]"\r\n\r\nen16931-ubl@1.3.16\r\n/);
+    });
+
+    it('sends no pin when there is none', async () => {
+        api.json(200, validation());
+
+        await client.validate({ text: '<a/>' }, { rulesVersion: [] });
+
+        assert.equal(api.sent[0]!.url.searchParams.has('rules_version'), false);
     });
 
     it('sends one rules file next to a URL', async () => {
@@ -179,6 +205,28 @@ describe('errors and retries', () => {
         });
     }
 
+    it('tells an outdated pin from a report not finished', async () => {
+        api.json(409, {
+            error: {
+                code: 'rules_version_mismatch',
+                message: 'Peppol BIS Billing 3.0 rules runs release 3.0.21 now, not 3.0.1. Review what changed and update the pin.',
+                rule_set: 'peppol-bis-3-ubl',
+                pinned: '3.0.1',
+                current: '3.0.21',
+            },
+        });
+        api.json(409, { error: { code: 'not_finished', message: 'Still running.' } });
+
+        await assert.rejects(client.validate({ text: '<a/>' }, { rulesVersion: 'peppol-bis-3-ubl@3.0.1' }), (error: unknown) => {
+            assert.ok(error instanceof RulesVersionMismatchError && error instanceof ApiError);
+            assert.equal(error.name, 'RulesVersionMismatchError');
+            assert.deepEqual([error.statusCode, error.errorCode, error.ruleSet, error.pinned, error.current], [409, 'rules_version_mismatch', 'peppol-bis-3-ubl', '3.0.1', '3.0.21']);
+            assert.match(error.message, /runs release 3.0.21 now/);
+            return true;
+        });
+        await assert.rejects(client.report('val_1'), (error: unknown) => error instanceof NotFinishedError && !(error instanceof RulesVersionMismatchError));
+    });
+
     it('lists the fields of an invalid request and names a server error', async () => {
         api.json(422, { error: { code: 'invalid_request', message: 'Check the fields.', fields: { schema: ['Unknown.'] } } });
         api.raw(502, '<html>Bad gateway</html>');
@@ -228,17 +276,46 @@ describe('the rest of the API', () => {
         api.json(200, { plan: 'pro', period: { start: '2026-10-01T00:00:00+00:00' }, validations: { used: 3, limit: 10000 }, limits: { requests_per_minute: 120 } });
         api.json(200, {
             saved: [{ schema: 'my-12', name: 'order.xsd', kind: 'xsd', namespace: 'urn:example:order' }],
-            catalog: [{ schema: 'peppol-bis-3-invoice', name: 'Peppol BIS Billing 3.0 Invoice', kind: 'xsd', namespace: null, version: '3.0.20', rules: ['EN 16931'] }],
+            catalog: [
+                {
+                    schema: 'peppol-bis-3-invoice',
+                    name: 'Peppol BIS Billing 3.0 Invoice',
+                    kind: 'xsd',
+                    namespace: null,
+                    version: '3.0.20',
+                    rules: ['EN 16931'],
+                    rule_sets: [{ key: 'en16931-ubl', name: 'EN 16931 rules 1.3.16 (UBL)', version: '1.3.16' }],
+                },
+            ],
         });
 
         const usage = await client.usage();
         const schemas = await client.schemas();
 
         assert.deepEqual([usage.plan, usage.remaining, usage.requestsPerMinute], ['pro', 9997, 120]);
-        assert.deepEqual(schemas.map((schema) => [schema.schema, schema.saved, schema.rules]), [
-            ['my-12', true, []],
-            ['peppol-bis-3-invoice', false, ['EN 16931']],
+        assert.deepEqual(schemas.map((schema) => [schema.schema, schema.saved, schema.rules, schema.ruleSets.map((set) => set.pin)]), [
+            ['my-12', true, [], []],
+            ['peppol-bis-3-invoice', false, ['EN 16931'], ['en16931-ubl@1.3.16']],
         ]);
+    });
+
+    it('reads the rule sets of a validation and its archive items', () => {
+        const peppol = { key: 'peppol-bis-3-ubl', name: 'Peppol BIS Billing 3.0 rules', version: '3.0.21' };
+        const en16931 = { key: 'en16931-ubl', name: 'EN 16931 rules 1.3.16 (UBL)', version: '1.3.16' };
+        const data = validation();
+        data['rule_sets'] = [en16931, peppol];
+        (data['result'] as Record<string, unknown>)['items'] = [{ name: 'a.xml', outcome: 'valid', valid: true, rule_sets: [peppol] }, { name: 'b.txt', outcome: 'skipped' }];
+
+        const result = new Validation(data);
+
+        assert.deepEqual(result.ruleSets.map((set) => [set.key, set.version, set.label, String(set)]), [
+            ['en16931-ubl', '1.3.16', 'EN 16931 rules 1.3.16 (UBL)', 'EN 16931 rules 1.3.16 (UBL)'],
+            ['peppol-bis-3-ubl', '3.0.21', 'Peppol BIS Billing 3.0 rules 3.0.21', 'Peppol BIS Billing 3.0 rules 3.0.21'],
+        ]);
+        assert.ok(result.ruleSets[1] instanceof RuleSet);
+        assert.equal(result.ruleSets[1]!.pin, 'peppol-bis-3-ubl@3.0.21');
+        assert.deepEqual(result.result?.items.map((item) => item.ruleSets.map((set) => set.pin)), [['peppol-bis-3-ubl@3.0.21'], []]);
+        assert.deepEqual(new Validation(validation()).ruleSets, []);
     });
 
     it('needs a key and a readable file', async () => {

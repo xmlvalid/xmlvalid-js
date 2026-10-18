@@ -21,6 +21,37 @@ const date = (data: Json, key: string): Date | null => {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+/** A set of business rules a catalog schema runs, at the release in use. */
+export class RuleSet {
+    /** What rulesVersion pins: peppol-bis-3-ubl. */
+    readonly key: string;
+    readonly name: string;
+    /** The release: 3.0.21. */
+    readonly version: string;
+
+    constructor(data: Json) {
+        this.key = string(data, 'key');
+        this.name = string(data, 'name');
+        this.version = string(data, 'version');
+    }
+
+    /** The pin for this release: "peppol-bis-3-ubl@3.0.21". */
+    get pin(): string {
+        return `${this.key}@${this.version}`;
+    }
+
+    /** Name and release, once: "Peppol BIS Billing 3.0 rules 3.0.21", "EN 16931 rules 1.3.16 (UBL)". */
+    get label(): string {
+        return this.name.includes(this.version) ? this.name : `${this.name} ${this.version}`;
+    }
+
+    toString(): string {
+        return this.label;
+    }
+}
+
+const ruleSets = (data: Json): RuleSet[] => objects(data, 'rule_sets').map((item) => new RuleSet(item));
+
 /** One error or warning, with where it is and, when there is one, the rule that failed. */
 export class Diagnostic {
     /** 0 when the message is about the whole document. */
@@ -77,10 +108,13 @@ export class ArchiveItem {
     readonly warnings: Diagnostic[];
     /** Why a skipped document was left unchecked. */
     readonly note: string | null;
+    /** The business rule sets its schema ran, with their releases. */
+    readonly ruleSets: RuleSet[];
 
     constructor(data: Json) {
         this.name = string(data, 'name');
         this.schema = optionalString(data, 'schema');
+        this.ruleSets = ruleSets(data);
         this.outcome = string(data, 'outcome');
         this.valid = bool(data, 'valid');
         this.errorsTotal = int(data, 'errors_total');
@@ -153,6 +187,8 @@ export class Validation {
     readonly document: Json;
     /** kind, catalog, saved, detected, name. */
     readonly schema: Json | null;
+    /** The business rule sets the schema runs, with their releases (empty without rules). */
+    readonly ruleSets: RuleSet[];
     readonly result: Result | null;
     /** What went wrong on xmlvalid's side when the status is failed. */
     readonly error: string | null;
@@ -170,6 +206,7 @@ export class Validation {
         this.finishedAt = date(data, 'finished_at');
         this.document = object(data, 'document') ?? {};
         this.schema = object(data, 'schema');
+        this.ruleSets = ruleSets(data);
         this.result = result === null ? null : new Result(result);
         this.error = optionalString(data, 'error');
         this.reportUrl = optionalString(object(data, 'links') ?? {}, 'report');
@@ -239,6 +276,8 @@ export class Schema {
     readonly version: string | null;
     /** Schematron rule sets run after the schema check, in order. */
     readonly rules: string[];
+    /** The same rule sets with their keys and releases, as rulesVersion pins them. */
+    readonly ruleSets: RuleSet[];
 
     constructor(data: Json, saved: boolean) {
         const rules = data['rules'];
@@ -249,6 +288,7 @@ export class Schema {
         this.saved = saved;
         this.version = optionalString(data, 'version');
         this.rules = Array.isArray(rules) ? rules.filter((rule): rule is string => typeof rule === 'string') : [];
+        this.ruleSets = ruleSets(data);
     }
 }
 

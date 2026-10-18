@@ -43,6 +43,17 @@ export class NotFinishedError extends ApiError {
     override name = 'NotFinishedError';
 }
 
+/** 409 rules_version_mismatch: a rule set pinned with rulesVersion runs another release now. Nothing ran and nothing counted. */
+export class RulesVersionMismatchError extends ApiError {
+    override name = 'RulesVersionMismatchError';
+    /** The rule set's key: peppol-bis-3-ubl. */
+    ruleSet = '';
+    /** The release pinned. */
+    pinned = '';
+    /** The release that runs now. */
+    current = '';
+}
+
 /** 413: over your plan's size limit. */
 export class DocumentTooLargeError extends ApiError {
     override name = 'DocumentTooLargeError';

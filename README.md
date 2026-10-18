@@ -63,6 +63,11 @@ The schema:
 Your own Schematron runs after the schema check: `rules: 'rules.sch'`, or for rules with
 includes, relative path: file: `rules: { 'main.sch': '/path/main.sch', 'parts/totals.sch': '/path/parts/totals.sch' }`.
 
+Catalog rule sets change with their publishers' releases. To be told rather than get findings of
+rules that changed, pin the releases your checks were written against:
+`rulesVersion: 'peppol-bis-3-ubl@3.0.21'` (or a list). When one runs another release, the request
+fails with a `RulesVersionMismatchError` before anything runs or counts.
+
 `signal: AbortSignal` aborts the requests and the waiting.
 
 ## The result
@@ -79,10 +84,15 @@ for (const error of validation.errors) {
     error.helpUrl;              // how to fix this kind of error
 }
 validation.warnings;
+for (const set of validation.ruleSets) {  // the business rule sets that ran (empty without rules)
+    set.key; set.name; set.version; // peppol-bis-3-ubl, Peppol BIS Billing 3.0 rules, 3.0.21
+    set.pin;                    // peppol-bis-3-ubl@3.0.21, for rulesVersion
+    set.label;                  // Peppol BIS Billing 3.0 rules 3.0.21
+}
 validation.raw;                 // the API's JSON
 ```
 
-For a .zip, `validation.result.items` has one result per document; for a PDF,
+For a .zip, `validation.result.items` has one result per document (each with its `ruleSets`); for a PDF,
 `validation.result.pdf` names the invoice found in it.
 
 ## Long validations, reports and the account
@@ -99,7 +109,7 @@ const html = await xmlvalid.report(done);        // the HTML report
 const link = await xmlvalid.share([done]);       // a public link for 30 days (Pro): link.url
 
 const usage = await xmlvalid.usage();            // usage.used, usage.limit, usage.remaining
-const schemas = await xmlvalid.schemas();        // your saved schemas, then the catalog
+const schemas = await xmlvalid.schemas();        // your saved schemas, then the catalog (rules, ruleSets)
 ```
 
 ## Errors
@@ -113,6 +123,7 @@ and, for `invalid_request`, `fields`:
 | `PlanLimitError` | 403: not in your plan |
 | `NotFoundError` | 404: no such validation, or it expired (24 hours) |
 | `NotFinishedError` | 409: the report of a validation still running |
+| `RulesVersionMismatchError` | 409: a `rulesVersion` pin is out of date; `ruleSet`, `pinned`, `current` |
 | `DocumentTooLargeError` | 413: over your plan's size limit |
 | `InvalidRequestError` | 422: unknown schema, a bad URL, … |
 | `QuotaExceededError` | 429: this month's validations are used up |

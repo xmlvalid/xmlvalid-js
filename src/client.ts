@@ -8,13 +8,14 @@ import {
     PlanLimitError,
     QuotaExceededError,
     RateLimitedError,
+    RulesVersionMismatchError,
     ServerError,
     TransportError,
     ValidationTimeoutError,
 } from './errors.ts';
 import { ReportLink, Schema, Usage, Validation } from './models.ts';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 export const DEFAULT_BASE_URL = 'https://xmlvalid.com/api/v1';
 
 /**
@@ -52,6 +53,11 @@ export interface ValidateOptions {
     rules?: FileInput | Record<string, FileInput> | undefined;
     /** Validate against the DTD the DOCTYPE names. */
     doctype?: boolean | undefined;
+    /**
+     * Pins the schema's rule sets to releases, as rule-set@version (peppol-bis-3-ubl@3.0.21); when one
+     * runs another release, the request fails with a RulesVersionMismatchError before anything runs.
+     */
+    rulesVersion?: string | string[] | undefined;
     /** Aborts the requests (and the waiting). */
     signal?: AbortSignal | undefined;
 }
@@ -144,18 +150,26 @@ export class Xmlvalid {
     async submit(document: DocumentInput, options: ValidateOptions & { wait?: number } = {}): Promise<Validation> {
         const wait = String(Math.max(0, Math.min(60, options.wait ?? 0)));
         const url = typeof document === 'object' && 'url' in document ? document.url : null;
+        const pins = pinsOf(options.rulesVersion);
 
         if (options.schemaFile !== undefined || options.rules !== undefined) {
             return new Validation(await this.#json({ method: 'POST', path: '/validations', signal: options.signal, body: () => multipart(document, options, wait) }));
         }
         if (url !== null) {
-            const body = { url, wait: Number(wait), ...(options.schema !== undefined && { schema: options.schema }), ...(options.doctype === true && { doctype: true }) };
+            const body = {
+                url,
+                wait: Number(wait),
+                ...(options.schema !== undefined && { schema: options.schema }),
+                ...(options.doctype === true && { doctype: true }),
+                ...(pins.length > 0 && { rules_version: pins }),
+            };
             return new Validation(await this.#json({ method: 'POST', path: '/validations', signal: options.signal, body: json(body) }));
         }
 
         const query: Record<string, string> = { wait };
         if (options.schema !== undefined) query['schema'] = options.schema;
         if (options.doctype === true) query['doctype'] = '1';
+        if (pins.length > 0) query['rules_version'] = pins.join(',');
         return new Validation(
             await this.#json({
                 method: 'POST',
@@ -282,6 +296,7 @@ const path = (id: string, suffix = ''): string => `/validations/${encodeURICompo
 const idOf = (validation: Validation | string): string => (typeof validation === 'string' ? validation : validation.id);
 const basename = (file: string): string => file.split(/[\\/]/).pop() || file;
 const contentType = (name: string): string => (XML_EXTENSION.test(name) ? 'application/xml' : 'application/octet-stream');
+const pinsOf = (rulesVersion: string | string[] | undefined): string[] => (rulesVersion === undefined ? [] : typeof rulesVersion === 'string' ? [rulesVersion] : rulesVersion);
 
 function json(value: unknown): () => Promise<Body> {
     return async () => ({ body: JSON.stringify(value), headers: { 'Content-Type': 'application/json' }, reusable: true });
@@ -334,6 +349,7 @@ async function multipart(document: DocumentInput, options: ValidateOptions, wait
         form.append('schema_file', blob, name);
     }
     if (options.doctype === true) form.append('doctype', '1');
+    for (const pin of pinsOf(options.rulesVersion)) form.append('rules_version[]', pin);
     const rules = options.rules;
     if (typeof rules === 'string' || rules instanceof Blob) {
         const { blob, name } = await fileBlob(rules);
@@ -370,6 +386,7 @@ async function apiError(response: Response): Promise<ApiError> {
         status === 401 ? AuthenticationError
         : status === 403 ? PlanLimitError
         : status === 404 ? NotFoundError
+        : status === 409 && code === 'rules_version_mismatch' ? RulesVersionMismatchError
         : status === 409 ? NotFinishedError
         : status === 413 ? DocumentTooLargeError
         : status === 422 ? InvalidRequestError
@@ -381,6 +398,11 @@ async function apiError(response: Response): Promise<ApiError> {
     const exception = new Kind(message, status, code, fields);
     if (exception instanceof RateLimitedError) {
         exception.retryAfter = Number.parseInt(response.headers.get('Retry-After') ?? '', 10) || 0;
+    }
+    if (exception instanceof RulesVersionMismatchError) {
+        exception.ruleSet = typeof error['rule_set'] === 'string' ? error['rule_set'] : '';
+        exception.pinned = typeof error['pinned'] === 'string' ? error['pinned'] : '';
+        exception.current = typeof error['current'] === 'string' ? error['current'] : '';
     }
     return exception;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@xmlvalid/sdk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "TypeScript / JavaScript client for the xmlvalid API: validate XML and e-invoices (Peppol, XRechnung, Factur-X, UBL, CII) against XSD, DTD, RelaxNG and Schematron business rules.",
   "keywords": ["xml", "xsd", "dtd", "relaxng", "schematron", "validation", "validator", "e-invoice", "einvoicing", "en16931", "peppol", "xrechnung", "zugferd", "factur-x", "ubl", "sdk"],
   "homepage": "https://xmlvalid.com/docs/api",
