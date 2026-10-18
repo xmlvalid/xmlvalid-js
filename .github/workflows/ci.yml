@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    name: Node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  # The tests run on the TypeScript sources, which Node 20 can't; check the build loads there.
+  node-20:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+      - run: node -e "const { Xmlvalid } = require('./dist/index.cjs'); new Xmlvalid({ apiKey: 'xv_test' })"
+      - run: node --input-type=module -e "import { verifyWebhook } from './dist/index.js'; await verifyWebhook('{}', 't=1,v1=0', 'x', { tolerance: 0 }).catch((e) => { if (e.name !== 'SignatureVerificationError') throw e; })"

@@ -1,0 +1,35 @@
+{
+  "name": "@xmlvalid/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript / JavaScript client for the xmlvalid API: validate XML and e-invoices (Peppol, XRechnung, Factur-X, UBL, CII) against XSD, DTD, RelaxNG and Schematron business rules.",
+  "keywords": ["xml", "xsd", "dtd", "relaxng", "schematron", "validation", "validator", "e-invoice", "einvoicing", "en16931", "peppol", "xrechnung", "zugferd", "factur-x", "ubl", "sdk"],
+  "homepage": "https://xmlvalid.com/docs/api",
+  "repository": { "type": "git", "url": "git+https://github.com/xmlvalid/xmlvalid-js.git" },
+  "bugs": "https://github.com/xmlvalid/xmlvalid-js/issues",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md", "CHANGELOG.md"],
+  "sideEffects": false,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsup",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "publishConfig": { "access": "public", "provenance": true },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.8.0"
+  }
+}
