@@ -79,6 +79,7 @@ validation.result?.errorsTotal; // all of them; the first 500 are listed
 for (const error of validation.errors) {
     error.line; error.column; error.level; error.type; // xsd, schematron, …
     error.rule;                 // BR-CO-16 for a business rule
+    error.path;                 // where it fired: /Invoice/cac:LegalMonetaryTotal
     error.message;
     error.ruleUrl;              // the rule's page on xmlvalid.com
     error.helpUrl;              // how to fix this kind of error
@@ -89,6 +90,8 @@ for (const set of validation.ruleSets) {  // the business rule sets that ran (em
     set.pin;                    // peppol-bis-3-ubl@3.0.21, for rulesVersion
     set.label;                  // Peppol BIS Billing 3.0 rules 3.0.21
 }
+validation.result?.sha256;      // SHA-256 of the file as sent
+validation.result?.engine;      // { xmlvalid: '0.1.0', libxml2: '2.13.9', saxonjs: '2.7.0' }
 validation.raw;                 // the API's JSON
 ```
 

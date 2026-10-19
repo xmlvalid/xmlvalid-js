@@ -65,6 +65,8 @@ export class Diagnostic {
     readonly message: string;
     /** The business rule that failed (BR-CO-15, PEPPOL-EN16931-R001) or the PDF check (PDF-AF). */
     readonly rule: string | null;
+    /** Where a business rule fired, as an XPath with the document's prefixes: /Invoice/cac:InvoiceLine[2]/cbc:LineExtensionAmount. */
+    readonly path: string | null;
     /** The message in English, for a rule its publisher wrote in another language. */
     readonly messageEn: string | null;
     /** A page explaining this kind of error and how to fix it. */
@@ -79,6 +81,7 @@ export class Diagnostic {
         this.type = string(data, 'type');
         this.message = string(data, 'message');
         this.rule = optionalString(data, 'rule');
+        this.path = optionalString(data, 'path');
         this.messageEn = optionalString(data, 'message_en');
         this.helpUrl = optionalString(data, 'help_url');
         this.ruleUrl = optionalString(data, 'rule_url');
@@ -93,6 +96,27 @@ export class Diagnostic {
         return (this.line > 0 ? `Line ${this.line}: ` : '') + (this.rule !== null ? `[${this.rule}] ` : '') + (this.messageEn ?? this.message);
     }
 }
+
+/** What checked a document, for an audit trail. */
+export class Engine {
+    /** The validation engine's version. */
+    readonly xmlvalid: string;
+    /** The libxml2 of the schema check: 2.13.9. */
+    readonly libxml2: string;
+    /** The SaxonJS of the business rules; null when none ran. */
+    readonly saxonjs: string | null;
+
+    constructor(data: Json) {
+        this.xmlvalid = string(data, 'xmlvalid');
+        this.libxml2 = string(data, 'libxml2');
+        this.saxonjs = optionalString(data, 'saxonjs');
+    }
+}
+
+const engine = (data: Json): Engine | null => {
+    const value = object(data, 'engine');
+    return value !== null && optionalString(value, 'libxml2') !== null ? new Engine(value) : null;
+};
 
 /** The result for one document of an archive. */
 export class ArchiveItem {
@@ -110,6 +134,9 @@ export class ArchiveItem {
     readonly note: string | null;
     /** The business rule sets its schema ran, with their releases. */
     readonly ruleSets: RuleSet[];
+    /** SHA-256 of the document (of the PDF for a PDF invoice), in hex. */
+    readonly sha256: string | null;
+    readonly engine: Engine | null;
 
     constructor(data: Json) {
         this.name = string(data, 'name');
@@ -122,6 +149,8 @@ export class ArchiveItem {
         this.errors = objects(data, 'errors').map((item) => new Diagnostic(item));
         this.warnings = objects(data, 'warnings').map((item) => new Diagnostic(item));
         this.note = optionalString(data, 'note');
+        this.sha256 = optionalString(data, 'sha256');
+        this.engine = engine(data);
     }
 }
 
@@ -147,6 +176,10 @@ export class Result {
     readonly documents: Json | null;
     /** For an archive: one result per document. */
     readonly items: ArchiveItem[];
+    /** SHA-256 of the file as sent (the PDF, the archive), in hex. */
+    readonly sha256: string | null;
+    /** What checked it: the libxml2 and, when business rules ran, the SaxonJS. */
+    readonly engine: Engine | null;
 
     constructor(data: Json) {
         this.valid = bool(data, 'valid');
@@ -161,6 +194,8 @@ export class Result {
         this.pdf = object(data, 'pdf');
         this.documents = object(data, 'documents');
         this.items = objects(data, 'items').map((item) => new ArchiveItem(item));
+        this.sha256 = optionalString(data, 'sha256');
+        this.engine = engine(data);
     }
 
     get firstError(): Diagnostic | null {

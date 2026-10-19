@@ -5,6 +5,7 @@ import { beforeEach, describe, it } from 'node:test';
 import {
     ApiError,
     AuthenticationError,
+    Engine,
     InvalidRequestError,
     NotFinishedError,
     PlanLimitError,
@@ -41,7 +42,7 @@ describe('sending documents', () => {
         assert.equal(sent.url.href, 'https://xmlvalid.com/api/v1/validations?wait=10&schema=peppol-bis-3-invoice&name=invoice.xml');
         assert.equal(sent.headers.get('Authorization'), 'Bearer xv_test');
         assert.equal(sent.headers.get('Content-Type'), 'application/xml');
-        assert.equal(sent.headers.get('User-Agent'), 'xmlvalid-js/1.1.0');
+        assert.equal(sent.headers.get('User-Agent'), 'xmlvalid-js/1.2.0');
         assert.equal(sent.body, readFileSync(fixture('invoice.xml'), 'utf8'));
         assert.equal(result.reportUrl, 'https://xmlvalid.com/api/v1/validations/val_1/report');
         assert.deepEqual(result.errors.map(String), ['Line 139: [BR-CO-16] Amount due']);
@@ -316,6 +317,25 @@ describe('the rest of the API', () => {
         assert.equal(result.ruleSets[1]!.pin, 'peppol-bis-3-ubl@3.0.21');
         assert.deepEqual(result.result?.items.map((item) => item.ruleSets.map((set) => set.pin)), [['peppol-bis-3-ubl@3.0.21'], []]);
         assert.deepEqual(new Validation(validation()).ruleSets, []);
+    });
+
+    it('reads where a rule fired, the document\'s hash and the engine', () => {
+        const error = { line: 139, column: 0, level: 'error', type: 'schematron', rule: 'BR-CO-16', path: '/Invoice/cac:LegalMonetaryTotal', message: 'Amount due' };
+        const data = validation('done', false, [error, { ...error, type: 'xsd', rule: null, path: null }]);
+        const engine = { xmlvalid: '0.1.0', libxml2: '2.13.9', saxonjs: '2.7.0' };
+        Object.assign(data['result'] as Record<string, unknown>, { sha256: 'ab'.repeat(32), engine, items: [{ name: 'a.xml', outcome: 'valid', sha256: 'cd'.repeat(32), engine: { ...engine, saxonjs: null } }] });
+
+        const result = new Validation(data).result!;
+
+        assert.deepEqual(result.errors.map((e) => e.path), ['/Invoice/cac:LegalMonetaryTotal', null]);
+        assert.equal(result.sha256, 'ab'.repeat(32));
+        assert.ok(result.engine instanceof Engine);
+        assert.deepEqual({ ...result.engine }, engine);
+        assert.equal(result.items[0]!.sha256, 'cd'.repeat(32));
+        assert.equal(result.items[0]!.engine?.saxonjs, null);
+        // Results kept from before the API named them.
+        const old = new Validation(validation()).result!;
+        assert.deepEqual([old.sha256, old.engine], [null, null]);
     });
 
     it('needs a key and a readable file', async () => {

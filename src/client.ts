@@ -15,7 +15,7 @@ import {
 } from './errors.ts';
 import { ReportLink, Schema, Usage, Validation } from './models.ts';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 export const DEFAULT_BASE_URL = 'https://xmlvalid.com/api/v1';
 
 /**
