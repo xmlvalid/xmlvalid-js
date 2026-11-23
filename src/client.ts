@@ -15,7 +15,7 @@ import {
 } from './errors.ts';
 import { ReportLink, Schema, Usage, Validation } from './models.ts';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 export const DEFAULT_BASE_URL = 'https://xmlvalid.com/api/v1';
 
 /**
@@ -43,7 +43,7 @@ export interface ValidateOptions {
     /** The document's name in results and reports (default: the file's, or document.xml). */
     name?: string | undefined;
     /**
-     * A catalog slug (peppol-bis-3-invoice), a saved schema (my-12), "auto" for the profile an
+     * A catalog slug (peppol-bis-3-invoice), a saved schema (@orders-v3), "auto" for the profile an
      * e-invoice names, or nothing to check well-formedness only.
      */
     schema?: string | undefined;
@@ -58,6 +58,10 @@ export interface ValidateOptions {
      * runs another release, the request fails with a RulesVersionMismatchError before anything runs.
      */
     rulesVersion?: string | string[] | undefined;
+    /** Fix the invoice as the validator does and check it again (Pro): see `result.fix`, and `fixed()` for the document. */
+    fix?: boolean | undefined;
+    /** Answers to `result.fix.asks` by their key: { 'buyer-reference': '04011000-12346-97' }. */
+    fixValues?: Record<string, string> | undefined;
     /** Aborts the requests (and the waiting). */
     signal?: AbortSignal | undefined;
 }
@@ -69,7 +73,7 @@ export interface WaitOptions {
 }
 
 export interface ClientOptions {
-    /** An API key (xv_…) from https://xmlvalid.com/dashboard/api; default: XMLVALID_API_KEY. */
+    /** An API key (xv_…, or a test key xv_test_… outside the monthly quota) from https://xmlvalid.com/dashboard/api; default: XMLVALID_API_KEY. */
     apiKey?: string | undefined;
     baseUrl?: string | undefined;
     /** Seconds `validate()` waits for a result in all. Default 900. */
@@ -162,6 +166,7 @@ export class Xmlvalid {
                 ...(options.schema !== undefined && { schema: options.schema }),
                 ...(options.doctype === true && { doctype: true }),
                 ...(pins.length > 0 && { rules_version: pins }),
+                ...(options.fix === true && { fix: true, ...(options.fixValues !== undefined && { fix_values: options.fixValues }) }),
             };
             return new Validation(await this.#json({ method: 'POST', path: '/validations', signal: options.signal, body: json(body) }));
         }
@@ -170,6 +175,7 @@ export class Xmlvalid {
         if (options.schema !== undefined) query['schema'] = options.schema;
         if (options.doctype === true) query['doctype'] = '1';
         if (pins.length > 0) query['rules_version'] = pins.join(',');
+        Object.assign(query, fixFields(options));
         return new Validation(
             await this.#json({
                 method: 'POST',
@@ -221,12 +227,21 @@ export class Xmlvalid {
         return (await this.#send({ method: 'GET', path: path(idOf(validation), '/report'), accept: 'text/html' })).text();
     }
 
+    /**
+     * The document a run with `fix: true` fixed, for as long as its result is kept.
+     *
+     * @throws {NotFoundError} when nothing was fixed (not_fixed) or the validation expired
+     */
+    async fixed(validation: Validation | string): Promise<Uint8Array> {
+        return new Uint8Array(await (await this.#send({ method: 'GET', path: path(idOf(validation), '/fixed'), accept: 'application/xml' })).arrayBuffer());
+    }
+
     /** A public link to the report of one or more validations, for 30 days (Pro). */
     async share(validations: Array<Validation | string>): Promise<ReportLink> {
         return new ReportLink(await this.#json({ method: 'POST', path: '/reports', body: json({ validations: validations.map(idOf) }) }));
     }
 
-    /** This month's validations and the plan's limits. */
+    /** This month's validations, today's test key validations and the plan's limits. */
     async usage(): Promise<Usage> {
         return new Usage(await this.#json({ method: 'GET', path: '/usage' }));
     }
@@ -296,6 +311,10 @@ const path = (id: string, suffix = ''): string => `/validations/${encodeURICompo
 const idOf = (validation: Validation | string): string => (typeof validation === 'string' ? validation : validation.id);
 const basename = (file: string): string => file.split(/[\\/]/).pop() || file;
 const contentType = (name: string): string => (XML_EXTENSION.test(name) ? 'application/xml' : 'application/octet-stream');
+/** fix=1 and fix_values[key]=value, as query or form fields. */
+const fixFields = (options: ValidateOptions): Record<string, string> =>
+    options.fix === true ? { fix: '1', ...Object.fromEntries(Object.entries(options.fixValues ?? {}).map(([key, value]) => [`fix_values[${key}]`, String(value)])) } : {};
+
 const pinsOf = (rulesVersion: string | string[] | undefined): string[] => (rulesVersion === undefined ? [] : typeof rulesVersion === 'string' ? [rulesVersion] : rulesVersion);
 
 function json(value: unknown): () => Promise<Body> {
@@ -350,6 +369,7 @@ async function multipart(document: DocumentInput, options: ValidateOptions, wait
     }
     if (options.doctype === true) form.append('doctype', '1');
     for (const pin of pinsOf(options.rulesVersion)) form.append('rules_version[]', pin);
+    for (const [field, value] of Object.entries(fixFields(options))) form.append(field, value);
     const rules = options.rules;
     if (typeof rules === 'string' || rules instanceof Blob) {
         const { blob, name } = await fileBlob(rules);
@@ -390,7 +410,8 @@ async function apiError(response: Response): Promise<ApiError> {
         : status === 409 ? NotFinishedError
         : status === 413 ? DocumentTooLargeError
         : status === 422 ? InvalidRequestError
-        : status === 429 && code === 'quota_exceeded' ? QuotaExceededError
+        // quota_exceeded for the month, test_quota_exceeded for a test key's day: neither is retried.
+        : status === 429 && (code === 'quota_exceeded' || code === 'test_quota_exceeded') ? QuotaExceededError
         : status === 429 ? RateLimitedError
         : status >= 500 ? ServerError
         : ApiError;

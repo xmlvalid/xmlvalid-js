@@ -154,6 +154,82 @@ export class ArchiveItem {
     }
 }
 
+/** One change `fix: true` made, in English. */
+export class FixChange {
+    /** The rule it answers (BR-CL-04); null for a schema error. */
+    readonly rule: string | null;
+    /** cbc:DocumentCurrencyCode was eur: EUR */
+    readonly text: string;
+
+    constructor(data: Json) {
+        this.rule = optionalString(data, 'rule');
+        this.text = string(data, 'text');
+    }
+
+    toString(): string {
+        return this.rule === null ? this.text : `[${this.rule}] ${this.text}`;
+    }
+}
+
+/** A fix that needs a value: answer it in `fixValues` by its `key`. */
+export class FixAsk {
+    /** buyer-reference, endpoint:buyer, billing-mode, unit:Stk, contact:email */
+    readonly key: string;
+    readonly rule: string | null;
+    /** Buyer reference (BT-10) */
+    readonly label: string;
+    /** text, unit, billing-mode, endpoint, email or phone. */
+    readonly kind: string;
+    readonly answered: boolean;
+    readonly hint: string | null;
+    /** A value read from the document, when there is one. */
+    readonly suggested: string | null;
+    /** The codes to choose from (units, billing modes). */
+    readonly options: string[];
+
+    constructor(data: Json) {
+        this.key = string(data, 'key');
+        this.rule = optionalString(data, 'rule');
+        this.label = string(data, 'label');
+        this.kind = string(data, 'kind', 'text');
+        this.answered = bool(data, 'answered');
+        this.hint = optionalString(data, 'hint');
+        this.suggested = optionalString(data, 'suggested');
+        const options = data['options'];
+        this.options = Array.isArray(options) ? options.filter((item): item is string => typeof item === 'string') : [];
+    }
+}
+
+/** What `fix: true` did (Pro): the changes, the values it still needs, and the fixed document checked again. */
+export class Fix {
+    static readonly FIXED = 'fixed';
+
+    /** fixed (`fixed()` downloads the document), unchanged, unsupported, too_large or failed. */
+    readonly status: string;
+    /** Why nothing was fixed. */
+    readonly reason: string | null;
+    readonly changes: FixChange[];
+    readonly asks: FixAsk[];
+    /** Values sent in `fixValues` that were refused, and why. */
+    readonly problems: Array<{ key: string; text: string }>;
+    /** The fixed document checked again (at most 20 errors and 20 warnings listed); null when nothing was fixed. */
+    readonly result: Result | null;
+
+    constructor(data: Json) {
+        const result = object(data, 'result');
+        this.status = string(data, 'status');
+        this.reason = optionalString(data, 'reason');
+        this.changes = objects(data, 'changes').map((item) => new FixChange(item));
+        this.asks = objects(data, 'asks').map((item) => new FixAsk(item));
+        this.problems = objects(data, 'problems').map((item) => ({ key: string(item, 'key'), text: string(item, 'text') }));
+        this.result = result === null ? null : new Result(result);
+    }
+
+    get isFixed(): boolean {
+        return this.status === Fix.FIXED;
+    }
+}
+
 /** What a finished validation found. */
 export class Result {
     /** True for the outcomes valid and warnings. */
@@ -180,8 +256,11 @@ export class Result {
     readonly sha256: string | null;
     /** What checked it: the libxml2 and, when business rules ran, the SaxonJS. */
     readonly engine: Engine | null;
+    /** What `fix: true` did; null without it. */
+    readonly fix: Fix | null;
 
     constructor(data: Json) {
+        const fix = object(data, 'fix');
         this.valid = bool(data, 'valid');
         this.outcome = string(data, 'outcome');
         this.errorsTotal = int(data, 'errors_total');
@@ -196,6 +275,7 @@ export class Result {
         this.items = objects(data, 'items').map((item) => new ArchiveItem(item));
         this.sha256 = optionalString(data, 'sha256');
         this.engine = engine(data);
+        this.fix = fix === null ? null : new Fix(fix);
     }
 
     get firstError(): Diagnostic | null {
@@ -229,6 +309,10 @@ export class Validation {
     readonly error: string | null;
     /** The result as an HTML page, once finished (needs the API key). */
     readonly reportUrl: string | null;
+    /** The fixed document of a run with `fix: true` that fixed it; `fixed()` downloads it. */
+    readonly fixedUrl: string | null;
+    /** Made with a test key (xv_test_…), outside the monthly quota. */
+    readonly test: boolean;
     /** The object as the API returned it. */
     readonly raw: Json;
 
@@ -245,6 +329,8 @@ export class Validation {
         this.result = result === null ? null : new Result(result);
         this.error = optionalString(data, 'error');
         this.reportUrl = optionalString(object(data, 'links') ?? {}, 'report');
+        this.fixedUrl = optionalString(object(data, 'links') ?? {}, 'fixed');
+        this.test = bool(data, 'test');
         this.raw = data;
     }
 
@@ -269,7 +355,7 @@ export class Validation {
     }
 }
 
-/** This month's validations and the plan's limits. */
+/** This month's validations, today's test key validations and the plan's limits. */
 export class Usage {
     /** free or pro. */
     readonly plan: string;
@@ -280,10 +366,15 @@ export class Usage {
     readonly limit: number;
     readonly maxFileBytes: number;
     readonly requestsPerMinute: number;
+    /** Validations made today (UTC) with test keys, counted apart from the month's. */
+    readonly testUsed: number;
+    readonly testLimit: number;
+    readonly testResetAt: Date | null;
 
     constructor(data: Json) {
         const period = object(data, 'period') ?? {};
         const validations = object(data, 'validations') ?? {};
+        const test = object(data, 'test_validations') ?? {};
         const limits = object(data, 'limits') ?? {};
         this.plan = string(data, 'plan');
         this.periodStart = date(period, 'start');
@@ -292,6 +383,9 @@ export class Usage {
         this.limit = int(validations, 'limit');
         this.maxFileBytes = int(limits, 'max_file_bytes');
         this.requestsPerMinute = int(limits, 'requests_per_minute');
+        this.testUsed = int(test, 'used');
+        this.testLimit = int(test, 'limit');
+        this.testResetAt = date(test, 'reset_at');
     }
 
     get remaining(): number {
@@ -301,7 +395,7 @@ export class Usage {
 
 /** A schema to validate against: one of the account's saved schemas or a catalog entry. */
 export class Schema {
-    /** The value to pass as schema: a catalog slug (peppol-bis-3-invoice) or a saved schema (my-12). */
+    /** The value to pass as schema: a catalog slug (peppol-bis-3-invoice) or a saved schema (@orders-v3). */
     readonly schema: string;
     readonly name: string;
     /** xsd, dtd, rng or rnc. */

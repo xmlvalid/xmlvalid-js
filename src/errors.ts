@@ -64,7 +64,7 @@ export class InvalidRequestError extends ApiError {
     override name = 'InvalidRequestError';
 }
 
-/** 429: this month's validations are used up. */
+/** 429: this month's validations are used up (quota_exceeded), or with a test key today's (test_quota_exceeded). */
 export class QuotaExceededError extends ApiError {
     override name = 'QuotaExceededError';
 }

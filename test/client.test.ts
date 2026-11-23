@@ -42,7 +42,7 @@ describe('sending documents', () => {
         assert.equal(sent.url.href, 'https://xmlvalid.com/api/v1/validations?wait=10&schema=peppol-bis-3-invoice&name=invoice.xml');
         assert.equal(sent.headers.get('Authorization'), 'Bearer xv_test');
         assert.equal(sent.headers.get('Content-Type'), 'application/xml');
-        assert.equal(sent.headers.get('User-Agent'), 'xmlvalid-js/1.2.0');
+        assert.equal(sent.headers.get('User-Agent'), 'xmlvalid-js/1.3.0');
         assert.equal(sent.body, readFileSync(fixture('invoice.xml'), 'utf8'));
         assert.equal(result.reportUrl, 'https://xmlvalid.com/api/v1/validations/val_1/report');
         assert.deepEqual(result.errors.map(String), ['Line 139: [BR-CO-16] Amount due']);
@@ -192,6 +192,13 @@ describe('errors and retries', () => {
         assert.deepEqual(sleeps, []);
     });
 
+    it('does not retry a test key\'s used up day', async () => {
+        api.json(429, { error: { code: 'test_quota_exceeded', message: 'Test keys run 50 validations a day.' } });
+
+        await assert.rejects(client.validate({ text: '<a/>' }), (error: unknown) => error instanceof QuotaExceededError && error.errorCode === 'test_quota_exceeded');
+        assert.deepEqual(sleeps, []);
+    });
+
     for (const [status, Kind] of [[401, AuthenticationError], [403, PlanLimitError], [409, NotFinishedError], [418, ApiError]] as const) {
         it(`maps ${status} to ${Kind.name}`, async () => {
             api.json(status, { error: { code: 'some_code', message: 'No.' } });
@@ -251,6 +258,50 @@ describe('errors and retries', () => {
     });
 });
 
+describe('fixing invoices', () => {
+    it('sends fix and its values, reads what it did and downloads the fixed document', async () => {
+        const body = validation('done', false) as Record<string, any>;
+        body['test'] = true;
+        body['links'] = { ...body['links'], fixed: 'https://xmlvalid.com/api/v1/validations/val_1/fixed' };
+        body['result']['fix'] = {
+            status: 'fixed',
+            reason: null,
+            changes: [{ rule: 'BR-CL-04', text: 'cbc:DocumentCurrencyCode was eur: EUR' }],
+            asks: [{ key: 'unit:Stk', rule: 'BR-CL-23', label: 'Unit Stk', kind: 'unit', answered: false, options: ['H87', 'C62'], suggested: null, hint: null }],
+            problems: [{ key: 'buyer-reference', text: 'Not a Leitweg-ID' }],
+            result: { valid: true, outcome: 'valid', errors_total: 0, warnings_total: 0, errors: [], warnings: [] },
+        };
+        api.json(200, body).raw(200, '<Invoice/>');
+
+        const result = await client.validate({ text: '<Invoice/>' }, { schema: 'auto', fix: true, fixValues: { 'buyer-reference': '04011000-1' } });
+        const fixed = await client.fixed(result);
+
+        assert.equal(api.sent[0]!.url.searchParams.get('fix'), '1');
+        assert.equal(api.sent[0]!.url.searchParams.get('fix_values[buyer-reference]'), '04011000-1');
+        assert.equal(api.sent[1]!.url.href, 'https://xmlvalid.com/api/v1/validations/val_1/fixed');
+        assert.equal(new TextDecoder().decode(fixed), '<Invoice/>');
+        assert.equal(result.test, true);
+        assert.equal(result.fixedUrl, 'https://xmlvalid.com/api/v1/validations/val_1/fixed');
+        const fix = result.result?.fix;
+        assert.ok(fix?.isFixed);
+        assert.deepEqual(fix.changes.map(String), ['[BR-CL-04] cbc:DocumentCurrencyCode was eur: EUR']);
+        assert.deepEqual(fix.asks[0]?.options, ['H87', 'C62']);
+        assert.equal(fix.problems[0]?.text, 'Not a Leitweg-ID');
+        assert.equal(fix.result?.valid, true);
+    });
+
+    it('puts fix in the JSON of a URL and in the form of an upload with rules', async () => {
+        api.json(200, validation()).json(200, validation());
+
+        await client.validate({ url: 'https://example.com/a.xml' }, { fix: true, fixValues: { 'billing-mode': 'B1' } });
+        await client.validate({ text: '<a/>' }, { rules: new Blob(['<schema/>']), fix: true });
+
+        const sent = JSON.parse(api.sent[0]!.body) as Record<string, unknown>;
+        assert.deepEqual([sent['fix'], sent['fix_values']], [true, { 'billing-mode': 'B1' }]);
+        assert.match(api.sent[1]!.body, /name="fix"\r\n\r\n1/);
+    });
+});
+
 describe('the rest of the API', () => {
     it('fetches, cancels, reports and shares', async () => {
         api.json(200, validation()).json(200, validation('cancelled')).raw(200, '<html>Report</html>');
@@ -274,9 +325,9 @@ describe('the rest of the API', () => {
     });
 
     it('reads usage and schemas', async () => {
-        api.json(200, { plan: 'pro', period: { start: '2026-10-01T00:00:00+00:00' }, validations: { used: 3, limit: 10000 }, limits: { requests_per_minute: 120 } });
+        api.json(200, { plan: 'pro', period: { start: '2026-10-01T00:00:00+00:00' }, validations: { used: 3, limit: 10000 }, test_validations: { used: 7, limit: 50, reset_at: '2026-10-19T00:00:00+00:00' }, limits: { requests_per_minute: 120 } });
         api.json(200, {
-            saved: [{ schema: 'my-12', name: 'order.xsd', kind: 'xsd', namespace: 'urn:example:order' }],
+            saved: [{ schema: '@orders-v3', name: 'order.xsd', kind: 'xsd', namespace: 'urn:example:order' }],
             catalog: [
                 {
                     schema: 'peppol-bis-3-invoice',
@@ -294,8 +345,9 @@ describe('the rest of the API', () => {
         const schemas = await client.schemas();
 
         assert.deepEqual([usage.plan, usage.remaining, usage.requestsPerMinute], ['pro', 9997, 120]);
+        assert.deepEqual([usage.testUsed, usage.testLimit, usage.testResetAt?.toISOString()], [7, 50, '2026-10-19T00:00:00.000Z']);
         assert.deepEqual(schemas.map((schema) => [schema.schema, schema.saved, schema.rules, schema.ruleSets.map((set) => set.pin)]), [
-            ['my-12', true, [], []],
+            ['@orders-v3', true, [], []],
             ['peppol-bis-3-invoice', false, ['EN 16931'], ['en16931-ubl@1.3.16']],
         ]);
     });

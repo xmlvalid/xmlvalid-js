@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+- `fix` and `fixValues` options of `validate()` and `submit()` (Pro): the invoice fixed as the
+  validator fixes it and checked again; `Result.fix` (`Fix`: `status`, `changes`, `asks`,
+  `problems`, `result`) says what was done, and `fixed()` downloads the fixed document.
+- Test keys (`xv_test_…`): `Validation.test`, and `Usage.testUsed`, `testLimit`, `testResetAt` for
+  the day's test validations. `test_quota_exceeded` throws `QuotaExceededError` without retries.
+
 ## 1.2.0
 
 - `Diagnostic.path`: where a business rule fired, as an XPath with the document's prefixes
