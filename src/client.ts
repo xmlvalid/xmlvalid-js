@@ -15,7 +15,7 @@ import {
 } from './errors.ts';
 import { ReportLink, Schema, Usage, Validation } from './models.ts';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 export const DEFAULT_BASE_URL = 'https://xmlvalid.com/api/v1';
 
 /**
@@ -70,6 +70,13 @@ export interface WaitOptions {
     /** Seconds to wait in all (default: the client's `timeout`). */
     timeout?: number | undefined;
     signal?: AbortSignal | undefined;
+}
+
+export interface InvoiceOptions extends WaitOptions {
+    /** xml (default), or pdf: a ZUGFeRD / Factur-X PDF with the XML inside (XRechnung, ZUGFeRD, France; not Peppol BIS). */
+    format?: 'xml' | 'pdf' | undefined;
+    /** Pins the profile's rule sets to releases, as for `validate()`. */
+    rulesVersion?: string | string[] | undefined;
 }
 
 export interface ClientOptions {
@@ -234,6 +241,37 @@ export class Xmlvalid {
      */
     async fixed(validation: Validation | string): Promise<Uint8Array> {
         return new Uint8Array(await (await this.#send({ method: 'GET', path: path(idOf(validation), '/fixed'), accept: 'application/xml' })).arrayBuffer());
+    }
+
+    /**
+     * Writes an e-invoice from JSON (the e-invoice generator's fields: `profile` xrechnung, peppol,
+     * zugferd or france, `lines`, `seller`, `buyer`…) and checks it against its profile's rules;
+     * `format: 'pdf'` makes a ZUGFeRD / Factur-X PDF with the XML inside. The validation's `invoice`
+     * says what was written; `invoiceDocument()` downloads it.
+     *
+     * @throws {ValidationTimeoutError} when it is still running after `timeout` seconds
+     */
+    async createInvoice(invoice: Record<string, unknown>, options: InvoiceOptions = {}): Promise<Validation> {
+        const timeout = options.timeout ?? this.#timeout;
+        const deadline = Date.now() + timeout * 1000;
+        const pins = pinsOf(options.rulesVersion);
+        const body = {
+            invoice,
+            format: options.format ?? 'xml',
+            wait: Math.floor(Math.min(this.#wait, Math.max(0, timeout))),
+            ...(pins.length > 0 && { rules_version: pins }),
+        };
+        const validation = new Validation(await this.#json({ method: 'POST', path: '/invoices', signal: options.signal, body: json(body) }));
+        return this.waitFor(validation, { timeout: Math.max(0, (deadline - Date.now()) / 1000), signal: options.signal });
+    }
+
+    /**
+     * The invoice `createInvoice()` wrote, XML or PDF, for as long as its result is kept.
+     *
+     * @throws {NotFoundError} when the validation wrote none (no_document) or expired
+     */
+    async invoiceDocument(validation: Validation | string): Promise<Uint8Array> {
+        return new Uint8Array(await (await this.#send({ method: 'GET', path: path(idOf(validation), '/document'), accept: 'application/xml, application/pdf' })).arrayBuffer());
     }
 
     /** A public link to the report of one or more validations, for 30 days (Pro). */

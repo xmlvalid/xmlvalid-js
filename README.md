@@ -98,6 +98,33 @@ validation.raw;                 // the API's JSON
 For a .zip, `validation.result.items` has one result per document (each with its `ruleSets`); for a PDF,
 `validation.result.pdf` names the invoice found in it.
 
+## Write e-invoices from JSON
+
+`createInvoice()` writes an invoice as XRechnung (UBL or CII), Peppol BIS, ZUGFeRD / Factur-X or a
+French CTC invoice, with the e-invoice generator's code, and checks it against the profile's
+schema and business rules. `format: 'pdf'` makes a ZUGFeRD PDF with the XML inside.
+
+```ts
+const written = await xmlvalid.createInvoice({
+    profile: 'xrechnung',
+    number: 'RE-2026-0042',
+    buyerReference: '04011000-12345-03',
+    seller: { name: 'Muster Software GmbH', street: 'Hauptstraße 12', city: 'Berlin', postcode: '10115', country: 'DE', vatId: 'DE136695976',
+        contact: { name: 'Anna Schmidt', phone: '+49 30 1234567', email: 'rechnung@muster-software.de' } },
+    buyer: { name: 'Beispiel Handel AG', street: 'Marktplatz 3', city: 'München', postcode: '80331', country: 'DE',
+        endpoint: { scheme: 'EM', id: 'eingang@beispiel-handel.de' } },
+    payment: { iban: 'DE02120300000000202051' },
+    lines: [{ name: 'Softwarelizenz', quantity: 1, unit: 'ANN', price: 1200, rate: 19 }],
+});
+
+written.isValid;                  // checked against the profile's rules
+written.invoice?.totals;          // { net, tax, payable, … } as written
+written.invoice?.ignored;         // fields sent that an invoice has no place for
+const xml = await xmlvalid.invoiceDocument(written);  // the XML (or PDF), kept for 24 hours
+```
+
+The fields are listed in the [API reference](https://xmlvalid.com/docs/api#invoices).
+
 ## Long validations, reports and the account
 
 `validate()` waits up to 15 minutes (`timeout`, in seconds); a `ValidationTimeoutError` carries

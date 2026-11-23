@@ -313,6 +313,13 @@ export class Validation {
     readonly fixedUrl: string | null;
     /** Made with a test key (xv_test_…), outside the monthly quota. */
     readonly test: boolean;
+    /**
+     * `createInvoice()` only: what was written (schema, profile, syntax, number, format, totals, and
+     * `ignored`, the fields sent that an invoice has no place for); null until it is.
+     */
+    readonly invoice: Json | null;
+    /** The invoice `createInvoice()` wrote; `invoiceDocument()` downloads it. */
+    readonly documentUrl: string | null;
     /** The object as the API returned it. */
     readonly raw: Json;
 
@@ -331,6 +338,8 @@ export class Validation {
         this.reportUrl = optionalString(object(data, 'links') ?? {}, 'report');
         this.fixedUrl = optionalString(object(data, 'links') ?? {}, 'fixed');
         this.test = bool(data, 'test');
+        this.invoice = object(data, 'invoice');
+        this.documentUrl = optionalString(object(data, 'links') ?? {}, 'document');
         this.raw = data;
     }
 

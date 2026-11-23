@@ -1,5 +1,5 @@
 export { DEFAULT_BASE_URL, VERSION, Xmlvalid } from './client.ts';
-export type { ClientOptions, DocumentInput, FileInput, ValidateOptions, WaitOptions } from './client.ts';
+export type { ClientOptions, DocumentInput, FileInput, InvoiceOptions, ValidateOptions, WaitOptions } from './client.ts';
 export {
     ApiError,
     AuthenticationError,

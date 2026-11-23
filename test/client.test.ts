@@ -42,7 +42,7 @@ describe('sending documents', () => {
         assert.equal(sent.url.href, 'https://xmlvalid.com/api/v1/validations?wait=10&schema=peppol-bis-3-invoice&name=invoice.xml');
         assert.equal(sent.headers.get('Authorization'), 'Bearer xv_test');
         assert.equal(sent.headers.get('Content-Type'), 'application/xml');
-        assert.equal(sent.headers.get('User-Agent'), 'xmlvalid-js/1.3.0');
+        assert.equal(sent.headers.get('User-Agent'), 'xmlvalid-js/1.4.0');
         assert.equal(sent.body, readFileSync(fixture('invoice.xml'), 'utf8'));
         assert.equal(result.reportUrl, 'https://xmlvalid.com/api/v1/validations/val_1/report');
         assert.deepEqual(result.errors.map(String), ['Line 139: [BR-CO-16] Amount due']);
@@ -255,6 +255,31 @@ describe('errors and retries', () => {
         controller.abort();
 
         await assert.rejects(client.validation('val_1', { signal: controller.signal }), { name: 'AbortError' });
+    });
+});
+
+describe('writing invoices', () => {
+    it('posts the invoice as JSON, waits for the check and downloads what was written', async () => {
+        const body = validation('done') as Record<string, any>;
+        body['document'] = { source: 'invoice', name: 'RE-1.pdf', size: 3 };
+        body['invoice'] = { schema: 'factur-x-en16931', profile: 'zugferd', syntax: 'cii', format: 'pdf', totals: { payable: '119.00' }, ignored: ['colour'] };
+        body['links'] = { ...body['links'], document: 'https://xmlvalid.com/api/v1/validations/val_1/document' };
+        api.json(200, body).raw(200, '%PDF');
+
+        const result = await client.createInvoice({ profile: 'zugferd', lines: [{ name: 'x', price: 100, rate: 19 }] }, { format: 'pdf', rulesVersion: 'factur-x-en16931@1.09.2' });
+        const pdf = await client.invoiceDocument(result);
+
+        assert.equal(api.sent[0]!.method, 'POST');
+        assert.equal(api.sent[0]!.url.href, 'https://xmlvalid.com/api/v1/invoices');
+        const sent = JSON.parse(api.sent[0]!.body);
+        assert.equal(sent.format, 'pdf');
+        assert.deepEqual(sent.rules_version, ['factur-x-en16931@1.09.2']);
+        assert.equal(sent.invoice.lines[0].price, 100);
+        assert.equal(api.sent[1]!.url.href, 'https://xmlvalid.com/api/v1/validations/val_1/document');
+        assert.equal(new TextDecoder().decode(pdf), '%PDF');
+        assert.equal(result.invoice?.['profile'], 'zugferd');
+        assert.deepEqual(result.invoice?.['ignored'], ['colour']);
+        assert.equal(result.documentUrl, 'https://xmlvalid.com/api/v1/validations/val_1/document');
     });
 });
 
